@@ -566,6 +566,9 @@
       (recur acc))
     acc))
 
+(defn -some= [x xs]
+  (-some (fn [y] (= x y)) xs))
+
 (defn -sort
   ([xs] (-sort compare xs))
   ([comp xs]

@@ -17,12 +17,20 @@
       (java.util Map HashMap HashSet Iterator ArrayDeque ArrayList)
       (java.lang Iterable))))
 
+#?(:cljs
+   (if (exists? js/window)
+     (def -crypto js/crypto)
+     (def -crypto (js/require "crypto"))))
+
 #?(:clj (set! *warn-on-reflection* true))
 
 (def -sentinel #?(:clj (Object.) :cljs (js/Object.)))
 
 (defmacro -if-clj  [then & [else]] (if (:ns &env) else then))
 (defmacro -if-cljs [then & [else]] (if (:ns &env) then else))
+
+(def -clj?  (-if-clj  true false))
+(def -cljs? (-if-cljs true false))
 
 (defmacro -now-dt* [] `(-if-clj (java.util.Date.) (js/Date.)))
 
@@ -161,13 +169,13 @@
   (let [it (-ensure-iter xs)]
     (loop []
       (when (.hasNext it)
-        (f (.next it))
-        (recur)))))
+        (when-not (reduced? (f (.next it)))
+          (recur))))))
 
 (defmacro -k* [m]
   `(-if-clj
-    (.key  ~(with-meta m {:tag 'clojure.lang.MapEntry}))
-    (.-key ~(with-meta m {:tag 'cljs.core.MapEntry}))))
+     (.key  ~(with-meta m {:tag 'clojure.lang.MapEntry}))
+     (.-key ~(with-meta m {:tag 'cljs.core.MapEntry}))))
 
 (defn -k [m]
   (-k* m))
@@ -259,19 +267,19 @@
      ~(if (symbol? m)
         `(.valAt ~(with-meta m {:tag 'clojure.lang.ILookup}) ~k)
         `(let [m# ~m] (-get* m# ~k)))
-     (~m ~k)))
+     (cljs.core/-lookup ~m ~k)))
   ([m k not-found]
    `(-if-clj
      ~(if (symbol? m)
         `(.valAt ~(with-meta m {:tag 'clojure.lang.ILookup}) ~k ~not-found)
         `(let [m# ~m] (-get* m# ~k ~not-found)))
-     (if (and ~m (.has ~m ~k)) (~m ~k) ~not-found))))
+     (if (and ~m (cljs.core/-contains-key? ~m ~k)) (cljs.core/-lookup ~m ~k) ~not-found))))
 
 (defn -get
   ([m k]
-   (-get* m k))
+   (when m (-get* m k)))
   ([m k not-found]
-   (-get* m k not-found)))
+   (if m (-get* m k not-found) not-found)))
 
 (defn -get-in
   ([m ks]
@@ -328,6 +336,9 @@
 (defn -transient? [xs]
   #?(:clj  (instance? clojure.lang.ITransientCollection xs)
      :cljs (satisfies? cljs.core.ITransientCollection xs)))
+
+(defn -ensure-persisten! [xs]
+  (if (-transient? xs) (persistent! xs) xs))
 
 (defn -ensure-transient ^clojure.lang.ITransientCollection [xs]
   (if (-transient? xs) xs (transient xs)))
@@ -556,17 +567,37 @@
 (def -conjs (fnil conj #{}))
 (def -conjs! (fnil conj! (transient #{})))
 
+(defn -into-all
+  ([to from       ]
+   (if-not (-transient? to) (into to from) (-reduce conj! to from)))
+  ([to from & more]
+   (persistent!
+    (-reduce (fn [acc in] (-reduce conj! acc in))
+      (-ensure-transient to)
+      (cons from more)))))
+
 (defn -merge
   ([] {})
   ([m] m)
   ([m1 m2]
-   (if m1 (conj m1 m2) m2))
+   (if m1 (-into-all m1 m2) m2))
   ([m1 m2 m3]
-   (-> (conj (or m1 {}) m1) (conj m2) (conj m3)))
+   (-into-all (or m1 {}) m2 m3))
   ([m1 m2 m3 m4]
-   (-> (conj (or m1 {}) m1) (conj m2) (conj m3) (conj m4)))
+   (-into-all (or m1 {}) m2 m3 m4))
   ([m1 m2 m3 m4 & maps]
-   (-reduce conj (-> (conj (or m1 {}) m1) (conj m2) (conj m3) (conj m4)) maps)))
+   (apply -into-all m1 m2 m3 m4 maps)))
+
+(def -merge! -merge)
+
+(defn -rename-keys [m kmap]
+  (-loop [me kmap :let [acc (transient m)]]
+    (let [k (-k* me)
+          v (-v* me)]
+      (if-let [x (-get* m k)]
+        (recur (-dissoc!* (-assoc!* acc v x) k))
+        acc))
+    (persistent! acc)))
 
 ;; https://github.com/ptaoussanis/encore/blob/master/src/taoensso/encore.cljc#L2942
 #?(:clj
@@ -667,6 +698,23 @@
        (recur (conj! acc x))
        (persistent! acc)))))
 
+(defn -filter-keys [pred m]
+  (-loop [me m :let [acc (transient m)]]
+    (let [k (-k* me)]
+      (if (pred k)
+        (recur acc)
+        (recur (-dissoc!* acc k))))
+    (persistent! acc)))
+
+(defn -filter-vals [pred m]
+  (-loop [me m :let [acc (transient m)]]
+    (let [k (-k* me)
+          v (-v* me)]
+      (if (pred v)
+        (recur acc)
+        (recur (-dissoc!* acc k))))
+    (persistent! acc)))
+
 (defn -sort-by
   ([kfn xs] (-sort-by kfn compare xs))
   ([kfn comp xs]
@@ -701,7 +749,7 @@
   #?(:clj  (-compose-preds or 16 4)
      :cljs (fn [preds] (fn [x] (boolean (-some (fn [pred] (pred x)) preds))))))
 
-(defprotocol IExinCollection
+(defprotocol IExtropyCollection
   (-add       [_ x] [_ i x])
   (-add-first [_ x])
   (-add-last  [_ x])
@@ -710,7 +758,7 @@
   (-put       [  k v])
   (-put-in    [  ks v]))
 
-(extend-protocol IExinCollection
+(extend-protocol IExtropyCollection
   #?@(:clj
       [ArrayDeque
        (-add-first [this x] (doto this (.addFirst x)))
@@ -981,6 +1029,43 @@
   #?(:clj (.startsWith ^String s ^String x)
      :cljs (zero? (.indexOf s x))))
 
+(defn -str-repeat [n s]
+  #?(:cljs
+     (loop [i 0 acc (-str-builder)]
+       (if (< i n)
+         (recur (inc i) (-sb-append acc s))
+         (str acc)))))
+
+#?(:cljs
+   (defn -key->prop [k]
+     (let [it (-iter (name k))]
+       (loop [acc (-str-builder)]
+         (if (.hasNext it)
+           (let [ch (.next it)]
+             (if (= "-" ch)
+               (recur (-sb-append acc (.toUpperCase (.next it))))
+               (recur (-sb-append acc ch))))
+           (str acc))))))
+
+#?(:cljs
+   (defn -prop->key [k]
+     (let [it (-iter k)]
+       (loop [acc (-str-builder)]
+         (if (.hasNext it)
+           (let [ch (.next it)]
+             (if (= ch (.toUpperCase ch))
+               (recur (-sb-append acc "-" (.toLowerCase ch)))
+               (recur (-sb-append acc ch))))
+           (str acc))))))
+
+#?(:cljs
+   (defn ->js-props [m]
+     (-loop [me m :let [acc (transient {})]]
+       (let [k (-k* me)
+             v (-v* me)]
+         (recur (-assoc!* acc (-key->prop k) (cond (keyword? v) (name v) :else v))))
+       (persistent! acc))))
+
 (defn -str-ends-with? [s x]
   #?(:clj (.endsWith ^String s ^String x)
      :cljs (let [sl (.-length s)
@@ -1021,7 +1106,7 @@
 #?(:cljs
    (defn -random-bytes [size]
      (let [seed (js/Uint8Array. size)]
-       (.getRandomValues js/crypto seed))))
+       (.getRandomValues -crypto seed))))
 
 #?(:cljs
    (let [alphabet (-mapv str "_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")]
@@ -1031,7 +1116,7 @@
         (let [bytes (-random-bytes size)]
           (loop [i 0 id (-str-builder)]
             (if (< i size)
-              (recur (inc i) (-sb-append id (alphabet (bit-and 63 (aget bytes i)))))
+              (recur (inc i) (-sb-append id (alphabet (bit-and 0x3f (aget bytes i)))))
               (str id))))))))
 
 ;; https://github.com/ptaoussanis/encore/blob/master/src/taoensso/encore.cljc#L531
@@ -1123,6 +1208,9 @@
   #?(:clj  (String/format fmt (to-array args))
      :cljs (apply gstr/format fmt args)))
 
+(defmacro -do-true [& body]
+  `(do ~@body true))
+
 (defn -do-task [t]
   (t (constantly nil) (constantly nil)))
 
@@ -1131,3 +1219,21 @@
 
 (defn -tap-task [t]
   (t #(tap> [:ok %]) #(tap> [:err %])))
+
+(defn -add-ns [ns m]
+  (persistent!
+    (-reduce-kv
+      (fn [acc k v] (-assoc!* acc (keyword ns k) v))
+      (transient {})
+      m)))
+
+(defn -remove-ns [m]
+  (persistent!
+    (-reduce-kv
+      (fn [acc k v] (-assoc!* acc (keyword (name k)) v))
+      (transient {})
+      m)))
+
+(defn -error? [x]
+  #?(:clj  (instance? Throwable x)
+     :cljs (instance? js/Error x)))

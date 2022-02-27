@@ -283,7 +283,7 @@
 
 (defn -get-in
   ([m ks]
-   (-loop [k ks :let [acc m]] (if-let [x (-get* acc k)] (recur x) nil) acc))
+   (-loop [k ks :let [acc m]] (if-some [x (-get* acc k)] (recur x) nil) acc))
   ([m ks not-found]
    (-loop [k ks :let [acc m]]
      (let [x (-get* acc k -sentinel)]
@@ -594,7 +594,7 @@
   (-loop [me kmap :let [acc (transient m)]]
     (let [k (-k* me)
           v (-v* me)]
-      (if-let [x (-get* m k)]
+      (if-some [x (-get* m k)]
         (recur (-dissoc!* (-assoc!* acc v x) k))
         acc))
     (persistent! acc)))
@@ -784,35 +784,35 @@
    (let [cache_ (volatile! {})]
      (fn
        ([]
-        (if-let [ov (-get* @cache_ -sentinel)]
+        (if-some [ov (-get* @cache_ -sentinel)]
           (if (identical? ov -sentinel) nil ov)
           (if-some [v (f)]
             (do (vswap! cache_ assoc -sentinel v) v)
             (do (vswap! cache_ assoc -sentinel -sentinel) nil))))
        ([x]
         (let [xs [x]]
-          (if-let [ov (-get* @cache_ xs)]
+          (if-some [ov (-get* @cache_ xs)]
             (if (identical? ov -sentinel) nil ov)
             (if-some [v (f x)]
               (do (vswap! cache_ assoc xs v) v)
               (do (vswap! cache_ assoc xs -sentinel) nil)))))
        ([x1 x2]
         (let [xs [x1 x2]]
-          (if-let [ov (-get* @cache_ xs)]
+          (if-some [ov (-get* @cache_ xs)]
             (if (identical? ov -sentinel) nil ov)
             (if-some [v (f x1 x2)]
               (do (vswap! cache_ assoc xs v) v)
               (do (vswap! cache_ assoc xs -sentinel) nil)))))
        ([x1 x2 x3]
         (let [xs [x1 x2 x3]]
-          (if-let [ov (-get* @cache_ xs)]
+          (if-some [ov (-get* @cache_ xs)]
             (if (identical? ov -sentinel) nil ov)
             (if-some [v (f x1 x2 x3)]
               (do (vswap! cache_ assoc xs v) v)
               (do (vswap! cache_ assoc xs -sentinel) nil)))))
        ([x1 x2 x3 & more]
         (let [xs [x1 x2 x3 more]]
-          (if-let [ov (-get* @cache_ xs)]
+          (if-some [ov (-get* @cache_ xs)]
             (if (identical? ov -sentinel) nil ov)
             (if-some [v (apply f x1 x2 x3 more)]
               (do (vswap! cache_ assoc xs v) v)
@@ -822,7 +822,7 @@
    (let [cache_ (volatile! {})]
      (fn [& args]
        (let [instant (-now-udt)]
-         (if-let [?e (-get* cache_ args)]
+         (if-some [?e (-get* cache_ args)]
            (if (> (- instant (.-udt ^CacheEntry ?e)) ttl-ms)
              (let [v (apply f args)]
                (vswap! cache_ assoc args (CacheEntry. instant v))
@@ -1077,7 +1077,7 @@
     (let [it (-iter xs)]
       (loop [acc (-str-builder)]
         (if (.hasNext it)
-          (if-let [s (.next it)]
+          (if-some [s (.next it)]
             (recur (-sb-append acc s (when (.hasNext it) sep)))
             (recur acc))
           (str acc))))
@@ -1087,7 +1087,7 @@
   (let [it1 (-iter xs)]
     (loop [acc (-str-builder (.next it1)) acc-ends-with-sep? false]
       (if (.hasNext it1)
-        (if-let [s (.next it1)]
+        (if-some [s (.next it1)]
           (let [starts-with-sep? (-str-starts-with? s sep)
                 ends-with-sep? (-str-ends-with? s sep)]
             (if acc-ends-with-sep?

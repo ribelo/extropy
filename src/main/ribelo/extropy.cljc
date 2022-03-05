@@ -283,10 +283,10 @@
 
 (defn -get-in
   ([m ks]
-   (-loop [k ks :let [acc m]] (if-some [x (-get* acc k)] (recur x) nil) acc))
+   (-loop [k ks :let [acc m]] (if-some [x (-get acc k)] (recur x) nil) acc))
   ([m ks not-found]
    (-loop [k ks :let [acc m]]
-     (let [x (-get* acc k -sentinel)]
+     (let [x (-get acc k -sentinel)]
        (if (identical? x -sentinel)
          not-found
          (recur x)))

@@ -1,4 +1,4 @@
-{:paths ["src/main"]
+{:paths ["src/main" "src/dev"]
  :deps  {}
  :aliases
  {:cljs

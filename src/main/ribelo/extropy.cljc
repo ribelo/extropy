@@ -590,7 +590,7 @@
 #?(:cljs
    (defn key->prop [k]
      (let [it (iter (name k))]
-       (loop-it [acc (str-builder)]
+       (loop [acc (str-builder)]
          (if (.hasNext it)
            (let [ch (.next it)]
              (if (= "-" ch)
@@ -601,7 +601,7 @@
 #?(:cljs
    (defn prop->key [k]
      (let [it (iter k)]
-       (loop-it [acc (str-builder)]
+       (loop [acc (str-builder)]
          (if (.hasNext it)
            (let [ch (.next it)]
              (if (= ch (.toUpperCase ch))
@@ -665,7 +665,7 @@
        ([] (nano-id 21))
        ([size]
         (let [bytes (random-bytes size)]
-          (loop-it [i 0 id (str-builder)]
+          (loop [i 0 id (str-builder)]
             (if (< i size)
               (recur (inc i) (sb-append id (alphabet (bit-and 0x3f (aget bytes i)))))
               (str id))))))))

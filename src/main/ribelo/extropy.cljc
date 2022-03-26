@@ -582,7 +582,7 @@
      :cljs (zero? (.indexOf s x))))
 
 (defn str-repeat [n s]
-  (loop-it [i 0 acc (str-builder)]
+  (loop [i 0 acc (str-builder)]
     (if (< i n)
       (recur (inc i) (sb-append acc s))
       (str acc))))

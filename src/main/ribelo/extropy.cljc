@@ -416,6 +416,13 @@
 (defn some= [x xs]
   (some (fn [y] (= x y)) xs))
 
+(defn intersect? [xs ys]
+  (loop-it [x xs :let [acc false]]
+    (if (some (fn [y] (= y x)) ys)
+      true
+      (recur acc))
+    acc))
+
 (defn sort
   ([xs] (sort compare xs))
   ([comp xs]

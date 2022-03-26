@@ -582,11 +582,10 @@
      :cljs (zero? (.indexOf s x))))
 
 (defn str-repeat [n s]
-  #?(:cljs
-     (loop-it [i 0 acc (str-builder)]
-       (if (< i n)
-         (recur (inc i) (sb-append acc s))
-         (str acc)))))
+  (loop-it [i 0 acc (str-builder)]
+    (if (< i n)
+      (recur (inc i) (sb-append acc s))
+      (str acc))))
 
 #?(:cljs
    (defn key->prop [k]

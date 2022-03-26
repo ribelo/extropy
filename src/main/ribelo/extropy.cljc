@@ -228,7 +228,7 @@
   (if (transient? xs) (persistent! xs) xs))
 
 (defn ensure-transient ^clojure.lang.ITransientCollection [xs]
-  (if (transient? xs) xs (transient xs)))
+  (when (some? xs) (if (transient? xs) xs (transient xs))))
 
 (defn deque
   (^ArrayDeque [] (deque []))

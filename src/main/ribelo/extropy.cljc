@@ -396,7 +396,7 @@
 (defn group-by [f data]
   (loop-it [x data :let [acc (transient {})]]
     (let [k (f x)]
-      (recur (assoc! acc k (conjv (get acc x) x))))
+      (recur (assoc! acc k (conjv (get acc k) x))))
     (persistent! acc)))
 
 (defn every? [pred xs]

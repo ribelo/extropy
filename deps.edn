@@ -5,4 +5,16 @@
   {:extra-paths ["src/dev"]
    :extra-deps  {thheller/shadow-cljs {:mvn/version "2.16.12"}}
    ;; :main-opts   ["-m" "shadow.cljs.devtools.cli"]
-   }}}
+   }
+  :build
+  {:extra-paths ["build"]
+   :extra-deps {badigeon/badigeon {:mvn/version "1.7"}
+                io.github.clojure/tools.build {:git/tag "v0.8.1" :git/sha "7d40500"}
+                slipset/deps-deploy {:mvn/version "RELEASE"}}
+   :exec-fn build/jar}
+  :deploy
+  {:extra-paths ["build"]
+   :extra-deps {badigeon/badigeon {:mvn/version "1.7"}
+                io.github.clojure/tools.build {:git/tag "v0.8.1" :git/sha "7d40500"}
+                slipset/deps-deploy {:mvn/version "RELEASE"}}
+   :exec-fn build/clojars}}}

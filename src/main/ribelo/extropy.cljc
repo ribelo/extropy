@@ -8,7 +8,8 @@
      :cljs
      (:require
       [cljs.core :as core]
-      [goog.string :as gstr]))
+      [goog.string :as gstr]
+      [goog.object :as gobj]))
   #?(:clj
      (:import
       (java.util Map HashMap HashSet Iterator ArrayDeque ArrayList)
@@ -16,8 +17,8 @@
 
 #?(:cljs
    (if (exists? js/window)
-     (def crypto js/crypto)
-     (def crypto (js/require "crypto"))))
+     (def -crypto js/crypto)
+     (def -crypto (js/require "crypto"))))
 
 #?(:clj (set! *warn-on-reflection* true))
 
@@ -66,11 +67,13 @@
 (defn ensure-iter ^Iterator [x]
   (if (iter? x) x (iter x)))
 
-(defn array-list
-  (^ArrayList [] (array-list []))
+(defn -array-list
+  (^ArrayList [] (-array-list []))
   (^ArrayList [xs]
    #?(:clj  (ArrayList. ^java.util.Collection xs)
       :cljs (to-array xs))))
+
+(declare reduce-kv)
 
 (defn native-map
   (^HashSet [] (native-map {}))
@@ -393,8 +396,8 @@
       (persistent! acc))
     []))
 
-(defn group-by [f data]
-  (loop-it [x data :let [acc (transient {})]]
+(defn group-by [f xs]
+  (loop-it [x xs :let [acc (transient {})]]
     (let [k (f x)]
       (recur (assoc! acc k (conjv (get acc k) x))))
     (persistent! acc)))
@@ -426,7 +429,7 @@
 (defn sort
   ([xs] (sort compare xs))
   ([comp xs]
-   (let [sorted (doto (array-list xs) #?(:clj (java.util.Collections/sort comp) :cljs (.sort comp)))]
+   (let [sorted (doto (-array-list xs) #?(:clj (java.util.Collections/sort comp) :cljs (.sort comp)))]
      (loop-it [x sorted :let [acc (transient [])]]
        (recur (conj! acc x))
        (persistent! acc)))))
@@ -541,18 +544,19 @@
      (:ms)
      n
      (:sec :secs :s)
-     (* n 1000)
+     (* n (ms 1000 :ms))
      (:min :mins :m)
-     (* n 1000 60)
+     (* n (ms 60 :sec))
      (:hour :hours :h)
-     (* n 1000 60 60)
+     (* n (ms 60 :min))
      (:day :days :d)
-     (* n 1000 60 60 24)
+     (* n (ms 24 :hours))
      (:week :weeks :w)
-     (* n 1000 60 60 24 7)
-     (:month :months)
-     (* n 1000 60 60 24 365)
-     (:year :years :y))))
+     (* n (ms 7 :days))
+     (:month :months :mn)
+     (* n (ms 30 :days))
+     (:year :years :y)
+     (* n (ms 365 :days)))))
 
 
 
@@ -611,17 +615,15 @@
 
 #?(:cljs
    (defn >js-props [m]
-     (loop-it [me m :let [acc (transient {})]]
-       (let [k (k* me)
-             v (v* me)]
-         (recur (assoc!* acc (key->prop k) (cond (keyword? v) (name v) :else v))))
+     (loop-it [[k v] m :let [acc (transient {})]]
+       (recur (assoc! acc (key->prop k) (cond (keyword? v) (name v) :else v)))
        (persistent! acc))))
 
 (defn str-ends-with? [s x]
   #?(:clj (.endsWith ^String s ^String x)
      :cljs (let [sl (.-length s)
                  xl (.-length x)]
-             (not= -1 (.lastIndexOf ^String s x ( sl xl))))))
+             (not= -1 (.lastIndexOf ^String s x sl xl)))))
 
 (defn str-join [sep xs]
   (if-not (= "" sep)
@@ -635,8 +637,9 @@
     (str (reduce sb-append (str-builder) xs))))
 
 (defn str-join-once [sep xs]
-  (let [it1 (iter xs)]
-    (loop [acc (str-builder (.next it1)) acc-ends-with-sep? false]
+  (let [it1 (iter xs)
+        begin (.next it1)]
+    (loop [acc (str-builder begin) acc-ends-with-sep? (str-ends-with? begin sep)]
       (if (.hasNext it1)
         (if-some [s (.next it1)]
           (let [starts-with-sep? (str-starts-with? s sep)
@@ -758,3 +761,79 @@
       (fn [acc k v] (assoc! acc (keyword (name k)) v))
       (transient {})
       m)))
+
+(defn url-encode [s]
+  #?(:cljs (-> (str s)
+               (js/encodeURIComponent s)
+               (.replace "*" "%2A"))))
+
+;; TODO
+(defn url-decode [s]
+  #?(:cljs (js/decodeURIComponent s)))
+
+(defn format-query-string [m]
+  (let [it (cond (map? m) (iter m) (vector? m) (iter (partition 2 m)))]
+    (loop [acc (str-builder)]
+      (if (.hasNext it)
+        (let [[k v] (.next it)]
+          (if (some? v)
+            (recur (sb-append acc (url-encode (name k)) "=" (url-encode (str v)) (when (.hasNext it) "&")))
+            (recur acc)))
+        (str acc)))))
+
+;; TODO
+(defn format-url
+  ([url] url)
+  ([url & args]
+   (let [x (last args)]
+     (if (or (map? x) (vector? x))
+       (let [x' (if (map? x) (filter-vals identity x) x)]
+         (apply str (apply format url (map url-encode (butlast args))) (when (seq x') ["?" (format-query-string x')])))
+       (apply format url (map url-encode args))))))
+
+(defn qname [k]
+  (if-let [ns (namespace k)]
+    (str ns "/" (name k))
+    (name k)))
+
+#?(:cljs
+   (defn oget
+     ([k]
+      (gobj/get js/window (qname k)))
+     ([^js o k]
+      (gobj/get o (qname k) nil))
+     ([^js o k not-found]
+      (gobj/get o (qname k) not-found))))
+
+#?(:cljs
+   (defn oget-in
+     ([ks] (oget-in js/window ks))
+     ([^js o ks] (oget-in o ks nil))
+     ([^js o ks not-found]
+      (loop-it [k ks :let [acc o]]
+        (let [x (oget acc k sentinel)]
+          (if (identical? x sentinel)
+            not-found
+            (recur x)))
+        acc))))
+
+#?(:cljs
+   (defn oset
+     [o k v]
+     (doto (or o (js-obj)) (gobj/set (qname k) v))))
+
+#?(:cljs
+   (defn oset-in
+     [o ks v]
+     (let [^js it (iter ks)
+           ^js acc (or o (js-obj))]
+       (loop [acc acc]
+         (when (.hasNext it)
+           (let [k (.next it)]
+             (if (.hasNext it)
+               (let [o (oget acc k (js-obj))
+                     o' (if (object? o) o (js-obj))]
+                 (oset acc k o')
+                 (recur o'))
+               (oset acc k v)))))
+       acc)))

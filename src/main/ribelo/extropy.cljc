@@ -640,7 +640,7 @@
    (defn js-props [m]
      (loop-it [[k v] m :let [acc (transient {})]]
        (recur (assoc! acc (key->prop k) (cond (keyword? v) (name v) :else v)))
-       (persistent! acc))))
+       (clj->js (persistent! acc)))))
 
 (defn str-ends-with? [s x]
   #?(:clj (.endsWith ^String s ^String x)

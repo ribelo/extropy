@@ -1,7 +1,7 @@
 (ns ribelo.extropy
   (:refer-clojure :exclude [iter run! reduce reduce-kv select-keys comp map filter remove keep group-by
                             every? some sort sort-by every-pred memoize format remove-ns])
-  #?(:cljs (:require-macros [ribelo.extropy :refer [if-clj if-cljs loop-it time-ms time-ns qb do-true -compose-preds]]))
+  #?(:cljs (:require-macros [ribelo.extropy :refer [if-clj if-cljs loop-it time-ms time-ns qb do-true with-memoize -compose-preds]]))
   #?(:clj
      (:require
       [clojure.core :as core])
@@ -93,7 +93,7 @@
    ;; Copied from clojure.lang.MultiIterator
    (let [iters ^{:tag "[Ljava.util.Iterator;"} (into-array (mapv ensure-iter colls))]
      (reify #?(:clj Iterator :cljs Object)
-       (hasNext [this]
+       (hasNext [_this]
          (let [len (alength iters)]
            (loop [i 0]
              (if (< i len)
@@ -102,7 +102,7 @@
                    (recur (unchecked-inc i))
                    false))
                true))))
-       (next [this]
+       (next [_this]
          (let [len (alength iters)
                arr #?(:clj (object-array len) :cljs (array))]
            (dotimes [i len]
@@ -135,6 +135,7 @@
 (defn run! [f xs]
   (loop-it [x xs]
     (when-not (reduced? (f x))
+      #_{:clj-kondo/ignore [:invalid-arity]}
       (recur))))
 
 (defn reduce
@@ -537,6 +538,30 @@
              (vswap! cache_ assoc args (CacheEntry. instant v))
              v)))))))
 
+(def ^:private -with-memoize-cache_ (volatile! {}))
+
+#?(:clj
+   (defmacro with-memoize
+     ([k & body]
+      (if-let [ttl-ms (:ttl (meta &form))]
+        `(let [instant# (now-udt)]
+           (let [x# ~k]
+             (if-some [?e# ((deref -with-memoize-cache_) x#)]
+               (if (> (- instant# (.-udt ^CacheEntry ?e#)) ~ttl-ms)
+                 (let [v# (do ~@body)]
+                   (vswap! -with-memoize-cache_ assoc x# (CacheEntry. instant# v#))
+                   v#)
+                 (.-v ^CacheEntry ?e#))
+               (let [v# (do ~@body)]
+                 (vswap! -with-memoize-cache_ assoc x# (CacheEntry. instant# v#))
+                 v#))))
+        `(let [x# ~k]
+           (or
+             (get (deref -with-memoize-cache_) ~k)
+             (let [result# (do ~@body)]
+               (vswap! -with-memoize-cache_ assoc ~k result#)
+               result#)))))))
+
 (defn ms
   ([n] n)
   ([n k]
@@ -557,8 +582,6 @@
      (* n (ms 30 :days))
      (:year :years :y)
      (* n (ms 365 :days)))))
-
-
 
 (def str-builder
   #?(:clj
@@ -614,7 +637,7 @@
            (str acc))))))
 
 #?(:cljs
-   (defn >js-props [m]
+   (defn js-props [m]
      (loop-it [[k v] m :let [acc (transient {})]]
        (recur (assoc! acc (key->prop k) (cond (keyword? v) (name v) :else v)))
        (persistent! acc))))
@@ -622,8 +645,9 @@
 (defn str-ends-with? [s x]
   #?(:clj (.endsWith ^String s ^String x)
      :cljs (let [sl (.-length s)
-                 xl (.-length x)]
-             (not= -1 (.lastIndexOf ^String s x sl xl)))))
+                 xl (.-length x)
+                 i (- sl xl)]
+             (= (.lastIndexOf ^String s x i) i))))
 
 (defn str-join [sep xs]
   (if-not (= "" sep)
@@ -791,6 +815,22 @@
          (apply str (apply format url (map url-encode (butlast args))) (when (seq x') ["?" (format-query-string x')])))
        (apply format url (map url-encode args))))))
 
+(defn ->cookie [m]
+  (cond
+    (map? m)
+    (let [it (iter m)]
+      (loop [acc (str-builder)]
+        (if (.hasNext it)
+          (let [[k v] (.next it)]
+            (recur (sb-append acc (name k) "=" v (when (.hasNext it) ","))))
+          (str acc))))
+
+    (vector? m)
+    (->cookie (into {} (partition-all 2) m))
+    ;; probably string
+    :else
+    m))
+
 (defn qname [k]
   (if-let [ns (namespace k)]
     (str ns "/" (name k))
@@ -820,7 +860,14 @@
 #?(:cljs
    (defn oset
      [o k v]
-     (doto (or o (js-obj)) (gobj/set (qname k) v))))
+     (doto (or o (js-obj)) (gobj/set (if (keyword? k) (qname k) k) v))))
+
+#?(:cljs
+   (defn oset-some
+     [o k v]
+     (if v
+       (oset o k v)
+       (or o (js-obj)))))
 
 #?(:cljs
    (defn oset-in
@@ -837,3 +884,20 @@
                  (recur o'))
                (oset acc k v)))))
        acc)))
+
+#?(:cljs
+   (defn oset-in-some
+     [o ks v]
+     (if v
+       (oset-in o ks v)
+       (or o (js-obj)))))
+
+#?(:cljs
+   (defn update-obj [o k f]
+     (let [x (or o (js-obj))]
+       (oset x k (f (oget x k))))))
+
+#?(:cljs
+   (defn update-in-obj [o ks f]
+     (let [x (or o (js-obj))]
+       (oset-in x ks (f (oget-in x ks))))))
